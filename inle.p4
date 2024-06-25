@@ -192,7 +192,9 @@ control MyIngress(inout headers hdr,
         // Least-Prefix Matching applied only when IPv4 header is correct
         // Simple forward
         else if (hdr.ipv4.isValid()) {
-            if (meta.departureTimestamp >= standard_metadata.ingress_global_timestamp) {
+            if (meta.departureTimestamp > standard_metadata.ingress_global_timestamp) {
+                recirculate_packet();
+            } else {
                 ipv4_forward_table.apply();
             }
         }
@@ -250,9 +252,8 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        // Emit headers based on their validity
-        packet.emit(hdr.customdata);
-        packet.emit(hdr.ipv4);
+        packet.emit(hdr.customdata);  // Always emit customdata
+        packet.emit(hdr.ipv4);        // Always emit ipv4
     }
 }
 
