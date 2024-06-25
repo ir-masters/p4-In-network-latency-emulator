@@ -11,37 +11,34 @@
 #define PKT_INSTANCE_TYPE_REPLICATION 5
 #define PKT_INSTANCE_TYPE_RESUBMIT 6
 
-const bit<16> TYPE_IPV4 = 0x800;
+const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_CUSTOMDATA = 0x1313;
-
-
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
 
-typedef bit<9>  egressSpec_t;
+typedef bit<9> egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
-
 
 header ethernet_t {
     macAddr_t dstAddr;
     macAddr_t srcAddr;
-    bit<16>   etherType;
+    bit<16> etherType;
 }
 
 header ipv4_t {
-    bit<4>    version;
-    bit<4>    ihl;
-    bit<8>    diffserv;
-    bit<16>   totalLen;
-    bit<16>   identification;
-    bit<3>    flags;
-    bit<13>   fragOffset;
-    bit<8>    ttl;
-    bit<8>    protocol;
-    bit<16>   hdrChecksum;
+    bit<4> version;
+    bit<4> ihl;
+    bit<8> diffserv;
+    bit<16> totalLen;
+    bit<16> identification;
+    bit<3> flags;
+    bit<13> fragOffset;
+    bit<8> ttl;
+    bit<8> protocol;
+    bit<16> hdrChecksum;
     ip4Addr_t srcAddr;
     ip4Addr_t dstAddr;
 }
@@ -49,15 +46,15 @@ header ipv4_t {
 header customdata_t {
     bit<16> proto_id;
     bit<16> content_id;
-    bit<8>  ingress_num;
-    bit<8>  egress_num;
+    bit<8> ingress_num;
+    bit<8> egress_num;
 }
 
 struct resubmit_meta_t {
    bit<8> i;
 }
 
-const bit<8> RESUB_FL_1  = 1;
+const bit<8> RESUB_FL_1 = 1;
 const bit<8> RECIRC_FL_1 = 3;
 
 struct metadata {
@@ -69,13 +66,13 @@ struct metadata {
 }
 
 struct headers {
-    ethernet_t      ethernet;
-    customdata_t    customdata;
-    ipv4_t          ipv4;
+    ethernet_t ethernet;
+    customdata_t customdata;
+    ipv4_t ipv4;
 }
 
 /*************************************************************************
-*********************** P A R S E R  ***********************************
+*********************** P A R S E R  *************************************
 *************************************************************************/
 
 parser MyParser(packet_in packet,
@@ -83,17 +80,14 @@ parser MyParser(packet_in packet,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
 
-      state start {
-        meta.arrivalTimestamp = standard_metadata.ingress_global_timestamp;
-        meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
+    state start {
         transition parse_ethernet;
     }
 
     state parse_ethernet {
         packet.extract(hdr.ethernet);
-        // 0x0800 (IPv4) is parsed and acted upon
-        // 0x1313 (CustomData) is parsed and acted upon
-        // Otherwise, continue without parsing == drops the packet
+        meta.arrivalTimestamp = standard_metadata.ingress_global_timestamp;
+        meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
             TYPE_CUSTOMDATA: parse_customdata;
@@ -103,8 +97,6 @@ parser MyParser(packet_in packet,
 
     state parse_customdata {
         packet.extract(hdr.customdata);
-        // 0x0800 (IPv4) is parsed and acted upon
-        // Otherwise, continue without parsing == drops the packet
         transition select(hdr.customdata.proto_id) {
             TYPE_IPV4: parse_ipv4;
             default: accept;
@@ -113,7 +105,6 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        // Continue to the next state without doing anything extra
         transition accept;
     }
 }
@@ -126,7 +117,6 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
     apply {  }
 }
 
-
 /*************************************************************************
 **************  I N G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
@@ -135,7 +125,7 @@ control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
- action drop() {
+    action drop() {
         mark_to_drop(standard_metadata);
     }
 
@@ -192,17 +182,19 @@ control MyIngress(inout headers hdr,
         // Exact Match applied only when CustomData header is correct
         // Modify custom field in ingress pipeline & recirculate packet just once
         if (hdr.customdata.isValid()) {
-            update_customdata_processing_count_by_num(0x00000001);
+            update_customdata_processing_count_by_num(1);
             if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_INGRESS_RECIRC) {
                 recirculate_packet();
+            } else {
+                customdata_forward_table.apply();
             }
-            customdata_forward_table.apply();
         }
         // Least-Prefix Matching applied only when IPv4 header is correct
         // Simple forward
-        if (hdr.ipv4.isValid() && !hdr.customdata.isValid()
-        && meta.departureTimestamp >= standard_metadata.egress_global_timestamp) {
-            ipv4_forward_table.apply();
+        else if (hdr.ipv4.isValid()) {
+            if (meta.departureTimestamp >= standard_metadata.ingress_global_timestamp) {
+                ipv4_forward_table.apply();
+            }
         }
     }
 }
@@ -221,7 +213,9 @@ control MyEgress(inout headers hdr,
     }
 
     apply {
-        update_customdata_processing_count_by_num(0x00000001);
+        if (hdr.customdata.isValid()) {
+            update_customdata_processing_count_by_num(1);
+        }
     }
 }
 
@@ -229,13 +223,12 @@ control MyEgress(inout headers hdr,
 *************   C H E C K S U M    C O M P U T A T I O N   **************
 *************************************************************************/
 
-
 control MyComputeChecksum(inout headers hdr, inout metadata meta) {
-     apply {
-	    update_checksum(
-	    hdr.ipv4.isValid(),
+    apply {
+        update_checksum(
+            hdr.ipv4.isValid(),
             { hdr.ipv4.version,
-	      hdr.ipv4.ihl,
+              hdr.ipv4.ihl,
               hdr.ipv4.diffserv,
               hdr.ipv4.totalLen,
               hdr.ipv4.identification,
@@ -257,20 +250,21 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
+        // Emit headers based on their validity
         packet.emit(hdr.customdata);
         packet.emit(hdr.ipv4);
-	}
+    }
 }
 
 /*************************************************************************
-***********************  S W I T C H  *******************************
+***********************  S W I T C H  ***********************************
 *************************************************************************/
 
 V1Switch(
-	MyParser(),
-	MyVerifyChecksum(),
-	MyIngress(),
-	MyEgress(),
-	MyComputeChecksum(),
-	MyDeparser()
+    MyParser(),
+    MyVerifyChecksum(),
+    MyIngress(),
+    MyEgress(),
+    MyComputeChecksum(),
+    MyDeparser()
 ) main;
