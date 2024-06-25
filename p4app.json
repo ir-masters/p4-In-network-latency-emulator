@@ -7,13 +7,11 @@
     "assignment_strategy": "l2",
     "links": [
       ["h1", "s1"],
-      ["h2", "s1"],
-      ["h3", "s1"]
+      ["h2", "s1"]
     ],
     "hosts": {
       "h1": {},
-      "h2": {},
-      "h3": {}
+      "h2": {}
     },
     "switches": {
       "s1": {}
