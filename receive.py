@@ -1,16 +1,29 @@
-#!/usr/bin/env python
-import sys
-import struct
-import os
+from scapy.all import *
+import time
 
-from scapy.all import sniff, sendp, hexdump, get_if_list, get_if_hwaddr
-from scapy.all import Packet, IPOption
-from scapy.all import ShortField, IntField, LongField, BitField, FieldListField, FieldLenField
-from scapy.all import IP, TCP, UDP, Raw
-from scapy.layers.inet import _IPOption_HDR
-from customdata_header import CustomData
+def handle_packet(packet):
+    # Log the arrival time and packet details
+    arrival_time = time.time()
+    
+    if packet.haslayer(IP):
+        ip_layer = packet[IP]
+        print(f"Received IPv4 packet: src={ip_layer.src}, dst={ip_layer.dst}, ttl={ip_layer.ttl}, "
+              f"id={ip_layer.id}, arrival_time={arrival_time}")
+    elif packet.haslayer(Raw) and len(packet[Raw]) >= 14:
+        # Assuming custom data packet if it's a Raw layer with at least 14 bytes (Ethernet header size)
+        ether_layer = packet[Ether]
+        custom_data = packet[Raw].load[0:14]  # Extract the custom data part
+        proto_id, content_id, ingress_num, egress_num, hop_latency = struct.unpack("!HHBBQ", custom_data)
+        print(f"Received Custom Data packet: dst={ether_layer.dst}, proto_id={proto_id}, "
+              f"content_id={content_id}, ingress_num={ingress_num}, egress_num={egress_num}, "
+              f"hop_latency={hop_latency}, arrival_time={arrival_time}")
+    else:
+        print(f"Received unknown packet type: {packet.summary()}, arrival_time={arrival_time}")
 
-
+def receive_packets(interface, count):
+    print(f"Listening for packets on interface {interface}...")
+    sniff(iface=interface, prn=handle_packet, count=count)
+    print("Finished capturing packets.")
 
 def get_if():
     ifs=get_if_list()
@@ -18,29 +31,15 @@ def get_if():
     for i in get_if_list():
         if "eth0" in i:
             iface=i
-            break
+            break;
     if not iface:
-        print("Cannot find eth0 interface")
+        print ("Cannot find eth0 interface")
         exit(1)
     return iface
 
-def handle_pkt(pkt):
-    if CustomData in pkt:
-        print("got a packet")
-        pkt.show2()
-        sys.stdout.flush()
-    else:
-        print("Not a customdata packet")
-        pkt.show2()
-        sys.stdout.flush()
-
-def main():
-    ifaces = filter(lambda i: 'eth' in i, os.listdir('/sys/class/net/'))
-    iface = ifaces[0]
-    print ("sniffing on %s") % iface
-    sys.stdout.flush()
-    sniff(iface = iface,
-          prn = lambda x: handle_pkt(x))
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    # Replace with your network interface name
+    interface = get_if()
+    # Number of packets to capture
+    packet_count = 10
+    receive_packets(interface, packet_count)
