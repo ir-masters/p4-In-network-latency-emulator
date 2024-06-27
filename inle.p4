@@ -55,6 +55,10 @@ header ipv6_t {
     ip6Addr_t dstAddr;
 }
 
+header hop_latency_t {
+    bit<48> hopLatency;
+}
+
 struct resubmit_meta_t {
    bit<8> i;
 }
@@ -73,6 +77,7 @@ struct headers {
     ethernet_t ethernet;
     ipv4_t ipv4;
     ipv6_t ipv6;
+    hop_latency_t hop_latency;
 }
 
 /*************************************************************************
@@ -90,8 +95,6 @@ parser MyParser(packet_in packet,
 
     state parse_ethernet {
         packet.extract(hdr.ethernet);
-        meta.arrivalTimestamp = standard_metadata.ingress_global_timestamp;
-        meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
             TYPE_IPV6: parse_ipv6;
@@ -101,11 +104,19 @@ parser MyParser(packet_in packet,
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        transition accept;
+        transition parse_hop_latency;
     }
 
     state parse_ipv6 {
         packet.extract(hdr.ipv6);
+        transition parse_hop_latency;
+    }
+
+    state parse_hop_latency {
+        packet.extract(hdr.hop_latency);
+        meta.arrivalTimestamp = standard_metadata.ingress_global_timestamp;
+        meta.hopLatency = hdr.hop_latency.hopLatency * 100000;
+        meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
         transition accept;
     }
 }
@@ -243,6 +254,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);        // Always emit ipv4 if valid
         packet.emit(hdr.ipv6);        // Always emit ipv6 if valid
+        packet.emit(hdr.hop_latency); // Always emit hop latency
     }
 }
 
