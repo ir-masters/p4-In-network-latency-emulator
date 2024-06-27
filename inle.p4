@@ -59,6 +59,10 @@ header hop_latency_t {
     bit<48> hopLatency;
 }
 
+header recirculation_flag_t {
+    bit<8> isRecirculated;
+}
+
 struct resubmit_meta_t {
    bit<8> i;
 }
@@ -71,6 +75,7 @@ struct metadata {
     bit<48> hopLatency;
     bit<48> arrivalTimestamp;
     bit<48> departureTimestamp;
+    bit<8> recircCounter;
 }
 
 struct headers {
@@ -78,6 +83,7 @@ struct headers {
     ipv4_t ipv4;
     ipv6_t ipv6;
     hop_latency_t hop_latency;
+    recirculation_flag_t recircFlag;
 }
 
 /*************************************************************************
@@ -98,7 +104,7 @@ parser MyParser(packet_in packet,
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
             TYPE_IPV6: parse_ipv6;
-            default: accept;
+            default: parse_hop_latency;
         }
     }
 
@@ -114,8 +120,9 @@ parser MyParser(packet_in packet,
 
     state parse_hop_latency {
         packet.extract(hdr.hop_latency);
+        packet.extract(hdr.recircFlag);
         meta.arrivalTimestamp = standard_metadata.ingress_global_timestamp;
-        meta.hopLatency = hdr.hop_latency.hopLatency * 100000;
+        meta.hopLatency = hdr.hop_latency.hopLatency * 1000000000;
         meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
         transition accept;
     }
@@ -149,6 +156,8 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         // Decrease TTL by one when forwarding the packet
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+        // Update hop latency in the packet header
+        hdr.hop_latency.hopLatency = meta.hopLatency + 1;
     }
 
     action ipv6_forward(macAddr_t dstAddr, egressSpec_t port) {
@@ -159,11 +168,8 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         // Decrease hop limit by one when forwarding the packet
         hdr.ipv6.hopLimit = hdr.ipv6.hopLimit - 1;
-    }
-
-    action recirculate_packet() {
-        // Send again the packet through both pipelines
-        resubmit_preserving_field_list(RESUB_FL_1);
+        // Update hop latency in the packet header
+        hdr.hop_latency.hopLatency = meta.hopLatency + 1;
     }
 
     table ipv4_forward_table {
@@ -196,17 +202,9 @@ control MyIngress(inout headers hdr,
         // Least-Prefix Matching applied only when IPv4 header is correct
         // Simple forward
         if (hdr.ipv4.isValid()) {
-            if (meta.departureTimestamp > standard_metadata.ingress_global_timestamp) {
-                recirculate_packet();
-            } else {
-                ipv4_forward_table.apply();
-            }
+            ipv4_forward_table.apply();
         } else if (hdr.ipv6.isValid()) {
-            if (meta.departureTimestamp > standard_metadata.ingress_global_timestamp) {
-                recirculate_packet();
-            } else {
-                ipv6_forward_table.apply();
-            }
+            ipv6_forward_table.apply();
         }
     }
 }
@@ -218,7 +216,29 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    apply { }
+
+    const bit<8> MAX_RECIRC = 5;
+
+    action drop() {
+        mark_to_drop(standard_metadata);
+    }
+
+    action recirculate_packet() {
+        // Send the packet through both ingress and egress pipelines again
+        meta.recircCounter = meta.recircCounter + 1;
+        hdr.recircFlag.isRecirculated = 1;
+        recirculate_preserving_field_list(RESUB_FL_1);
+    }
+
+    apply {
+        if (meta.recircCounter > MAX_RECIRC) {
+            drop();
+        } else {
+            if (meta.departureTimestamp > standard_metadata.egress_global_timestamp) {
+                recirculate_packet();
+            }
+        }
+    }
 }
 
 /*************************************************************************
@@ -255,6 +275,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
         packet.emit(hdr.ipv4);        // Always emit ipv4 if valid
         packet.emit(hdr.ipv6);        // Always emit ipv6 if valid
         packet.emit(hdr.hop_latency); // Always emit hop latency
+        packet.emit(hdr.recircFlag);  // Emit recirculation flag
     }
 }
 
