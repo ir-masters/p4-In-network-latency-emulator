@@ -12,7 +12,7 @@
 #define PKT_INSTANCE_TYPE_RESUBMIT 6
 
 const bit<16> TYPE_IPV4 = 0x0800;
-const bit<16> TYPE_CUSTOMDATA = 0x1313;
+const bit<16> TYPE_IPV6 = 0x86DD;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -21,6 +21,7 @@ const bit<16> TYPE_CUSTOMDATA = 0x1313;
 typedef bit<9> egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
+typedef bit<128> ip6Addr_t;
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -43,11 +44,15 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
-header customdata_t {
-    bit<16> proto_id;
-    bit<16> content_id;
-    bit<8> ingress_num;
-    bit<8> egress_num;
+header ipv6_t {
+    bit<4> version;
+    bit<8> trafficClass;
+    bit<20> flowLabel;
+    bit<16> payloadLen;
+    bit<8> nextHdr;
+    bit<8> hopLimit;
+    ip6Addr_t srcAddr;
+    ip6Addr_t dstAddr;
 }
 
 struct resubmit_meta_t {
@@ -55,10 +60,9 @@ struct resubmit_meta_t {
 }
 
 const bit<8> RESUB_FL_1 = 1;
-const bit<8> RECIRC_FL_1 = 3;
 
 struct metadata {
-    @field_list(RESUB_FL_1, RECIRC_FL_1)
+    @field_list(RESUB_FL_1)
     resubmit_meta_t resubmit_meta;
     bit<48> hopLatency;
     bit<48> arrivalTimestamp;
@@ -67,8 +71,8 @@ struct metadata {
 
 struct headers {
     ethernet_t ethernet;
-    customdata_t customdata;
     ipv4_t ipv4;
+    ipv6_t ipv6;
 }
 
 /*************************************************************************
@@ -90,21 +94,18 @@ parser MyParser(packet_in packet,
         meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
-            TYPE_CUSTOMDATA: parse_customdata;
-            default: accept;
-        }
-    }
-
-    state parse_customdata {
-        packet.extract(hdr.customdata);
-        transition select(hdr.customdata.proto_id) {
-            TYPE_IPV4: parse_ipv4;
+            TYPE_IPV6: parse_ipv6;
             default: accept;
         }
     }
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
+        transition accept;
+    }
+
+    state parse_ipv6 {
+        packet.extract(hdr.ipv6);
         transition accept;
     }
 }
@@ -129,11 +130,6 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
-    action update_customdata_processing_count_by_num(in bit<8> ingress_num) {
-        // This field indicates how many times the packet goes through the ingress pipeline
-        hdr.customdata.ingress_num = hdr.customdata.ingress_num + ingress_num;
-    }
-
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         // Define the output port
         standard_metadata.egress_spec = port;
@@ -144,8 +140,14 @@ control MyIngress(inout headers hdr,
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
-    action customdata_forward(egressSpec_t port) {
+    action ipv6_forward(macAddr_t dstAddr, egressSpec_t port) {
+        // Define the output port
         standard_metadata.egress_spec = port;
+        // Update src and dst MACs according to the current switch
+        hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
+        hdr.ethernet.dstAddr = dstAddr;
+        // Decrease hop limit by one when forwarding the packet
+        hdr.ipv6.hopLimit = hdr.ipv6.hopLimit - 1;
     }
 
     action recirculate_packet() {
@@ -166,36 +168,33 @@ control MyIngress(inout headers hdr,
         default_action = NoAction();
     }
 
-    table customdata_forward_table {
+    table ipv6_forward_table {
         key = {
-            hdr.customdata.content_id: exact;
+            hdr.ipv6.dstAddr: lpm;
         }
         actions = {
-            customdata_forward;
+            ipv6_forward;
             drop;
+            NoAction;
         }
         size = 1024;
-        default_action = drop();
+        default_action = NoAction();
     }
 
     apply {
-        // Exact Match applied only when CustomData header is correct
-        // Modify custom field in ingress pipeline & recirculate packet just once
-        if (hdr.customdata.isValid()) {
-            update_customdata_processing_count_by_num(1);
-            if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_INGRESS_RECIRC) {
-                recirculate_packet();
-            } else {
-                customdata_forward_table.apply();
-            }
-        }
         // Least-Prefix Matching applied only when IPv4 header is correct
         // Simple forward
-        else if (hdr.ipv4.isValid()) {
+        if (hdr.ipv4.isValid()) {
             if (meta.departureTimestamp > standard_metadata.ingress_global_timestamp) {
                 recirculate_packet();
             } else {
                 ipv4_forward_table.apply();
+            }
+        } else if (hdr.ipv6.isValid()) {
+            if (meta.departureTimestamp > standard_metadata.ingress_global_timestamp) {
+                recirculate_packet();
+            } else {
+                ipv6_forward_table.apply();
             }
         }
     }
@@ -208,17 +207,7 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-
-    action update_customdata_processing_count_by_num(in bit<8> egress_num) {
-        // This field indicates how many times the packet goes through the egress pipeline
-        hdr.customdata.egress_num = hdr.customdata.egress_num + egress_num;
-    }
-
-    apply {
-        if (hdr.customdata.isValid()) {
-            update_customdata_processing_count_by_num(1);
-        }
-    }
+    apply { }
 }
 
 /*************************************************************************
@@ -252,8 +241,8 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        packet.emit(hdr.customdata);  // Always emit customdata
-        packet.emit(hdr.ipv4);        // Always emit ipv4
+        packet.emit(hdr.ipv4);        // Always emit ipv4 if valid
+        packet.emit(hdr.ipv6);        // Always emit ipv6 if valid
     }
 }
 
