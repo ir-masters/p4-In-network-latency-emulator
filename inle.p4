@@ -14,6 +14,7 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<16> TYPE_CUSTOMDATA = 0x1313;
+
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -22,12 +23,14 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 
+/* Define the Ethernet header */
 header ethernet_t {
     macAddr_t dstAddr;
     macAddr_t srcAddr;
     bit<16>   etherType;
 }
 
+/* Define the IPv4 header */
 header ipv4_t {
     bit<4>    version;
     bit<4>    ihl;
@@ -43,12 +46,13 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+/* Define the custom data header for latency emulation */
 header customdata_t {
     bit<16> proto_id;
     bit<16> content_id;
     bit<16> ingress_num;
     bit<8>  egress_num;
-    bit<48> hop_latency; // hop_latency in seconds
+    bit<48> hop_latency;
     bit<48> arrival_time;
     bit<48> departure_time;
 }
@@ -56,6 +60,7 @@ header customdata_t {
 const bit<8> RECIRC_FL_1 = 3;
 const bit<16> MAX_RECIRC = 1000;
 
+/* Metadata structure for resubmitting packets */
 struct resubmit_meta_t {
     @field_list(RECIRC_FL_1)
     bit<16> i;
@@ -63,10 +68,12 @@ struct resubmit_meta_t {
     bit<48> departure_timestamp;
 }
 
+/* Define the metadata structure */
 struct metadata {
     resubmit_meta_t resubmit_meta;
 }
 
+/* Define the headers structure */
 struct headers {
     ethernet_t      ethernet;
     customdata_t    customdata;
@@ -74,9 +81,10 @@ struct headers {
 }
 
 /*************************************************************************
-*********************** P A R S E R  ***********************************
+*********************** P A R S E R  *************************************
 *************************************************************************/
 
+/* Define the parser */
 parser MyParser(packet_in packet,
                 out headers hdr,
                 inout metadata meta,
@@ -110,29 +118,34 @@ parser MyParser(packet_in packet,
 }
 
 /*************************************************************************
-************   C H E C K S U M    V E R I F I C A T I O N   *************
+************   C H E C K S U M    V E R I F I C A T I O N   **************
 *************************************************************************/
 
+/* Checksum verification control block */
 control MyVerifyChecksum(inout headers hdr, inout metadata meta) {   
     apply {  }
 }
 
 /*************************************************************************
-**************  I N G R E S S   P R O C E S S I N G   *******************
+**************  I N G R E S S   P R O C E S S I N G   ********************
 *************************************************************************/
 
+/* Define the ingress processing control block */
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
 
+    /* Drop action */
     action drop() {
         mark_to_drop(standard_metadata);
     }
 
+    /* Update custom data processing count */
     action update_customdata_processing_count_by_num(in bit<16> ingress_num) {
         hdr.customdata.ingress_num = hdr.customdata.ingress_num + ingress_num;
     }
 
+    /* IPv4 forwarding action */
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         standard_metadata.egress_spec = port;
         hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
@@ -140,24 +153,29 @@ control MyIngress(inout headers hdr,
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
+    /* Custom data forwarding action */
     action customdata_forward(egressSpec_t port) {
         standard_metadata.egress_spec = port;
     }
 
+    /* Recirculate packet action */
     action recirculate_packet() {
         resubmit_preserving_field_list(RECIRC_FL_1);
     }
 
+    /* Timestamp packet arrival */
     action timestamp_packet() {
         hdr.customdata.arrival_time = standard_metadata.ingress_global_timestamp;
         meta.resubmit_meta.arrival_timestamp = hdr.customdata.arrival_time;
     }
 
+    /* Calculate departure time */
     action calculate_departure_time(bit<48> latency_ns) {
         hdr.customdata.departure_time = standard_metadata.ingress_global_timestamp + latency_ns;
         meta.resubmit_meta.departure_timestamp = hdr.customdata.departure_time;
     }
 
+    /* Table for IPv4 forwarding */
     table ipv4_forward_table {
         key = {
             hdr.ipv4.dstAddr: lpm;
@@ -171,6 +189,7 @@ control MyIngress(inout headers hdr,
         default_action = NoAction();
     }
 
+    /* Table for custom data forwarding */
     table customdata_forward_table {
         key = {
             hdr.customdata.content_id: exact;
@@ -207,21 +226,25 @@ control MyIngress(inout headers hdr,
 }
 
 /*************************************************************************
-****************  E G R E S S   P R O C E S S I N G   *******************
+****************  E G R E S S   P R O C E S S I N G   ********************
 *************************************************************************/
 
+/* Define the egress processing control block */
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
 
+    /* Update custom data processing count */
     action update_customdata_processing_count_by_num(in bit<8> egress_num) {
         hdr.customdata.egress_num = hdr.customdata.egress_num + egress_num;
     }
 
+    /* Update arrival time */
     action update_arrival_time() {
         hdr.customdata.arrival_time = meta.resubmit_meta.arrival_timestamp;
     }
 
+    /* Update departure time */
     action update_departure_time() {
         hdr.customdata.departure_time = meta.resubmit_meta.departure_timestamp;
     }
@@ -236,9 +259,10 @@ control MyEgress(inout headers hdr,
 }
 
 /*************************************************************************
-*************   C H E C K S U M    C O M P U T A T I O N   **************
+*************   C H E C K S U M    C O M P U T A T I O N   ***************
 *************************************************************************/
 
+/* Checksum computation control block */
 control MyComputeChecksum(inout headers hdr, inout metadata meta) {
      apply {
 	update_checksum(
@@ -260,9 +284,10 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 }
 
 /*************************************************************************
-***********************  D E P A R S E R  *******************************
+***********************  D E P A R S E R  ********************************
 *************************************************************************/
 
+/* Define the deparser */
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
@@ -272,9 +297,10 @@ control MyDeparser(packet_out packet, in headers hdr) {
 }
 
 /*************************************************************************
-***********************  S W I T C H  *******************************
+***********************  S W I T C H  ************************************
 *************************************************************************/
 
+/* Define the main switch */
 V1Switch(
 MyParser(),
 MyVerifyChecksum(),
