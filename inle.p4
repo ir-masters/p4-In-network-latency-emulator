@@ -4,14 +4,9 @@
 
 /* Define constants for types of packets */
 #define PKT_INSTANCE_TYPE_NORMAL 0
-#define PKT_INSTANCE_TYPE_INGRESS_CLONE 1
-#define PKT_INSTANCE_TYPE_EGRESS_CLONE 2
-#define PKT_INSTANCE_TYPE_COALESCED 3
-#define PKT_INSTANCE_TYPE_INGRESS_RECIRC 4
-#define PKT_INSTANCE_TYPE_REPLICATION 5
-#define PKT_INSTANCE_TYPE_RESUBMIT 6
 
 const bit<16> TYPE_IPV4 = 0x0800;
+const bit<8> PROTO_TCP = 0x06;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -20,6 +15,7 @@ const bit<16> TYPE_IPV4 = 0x0800;
 typedef bit<9> egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
+typedef bit<16> tcpPort_t;
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -42,34 +38,39 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+header tcp_t {
+    tcpPort_t srcPort;
+    tcpPort_t dstPort;
+    bit<32> seqNo;
+    bit<32> ackNo;
+    bit<4> dataOffset;
+    bit<4> res;
+    bit<8> flags;
+    bit<16> window;
+    bit<16> checksum;
+    bit<16> urgentPtr;
+}
+
 header hop_latency_t {
     bit<48> hopLatency;
 }
 
-header recirculation_flag_t {
-    bit<8> isRecirculated;
-}
-
-struct resubmit_meta_t {
-   bit<8> i;
-}
-
-const bit<8> RESUB_FL_1 = 1;
+const bit<8> RECIRC_FL_1 = 1;
 
 struct metadata {
-    @field_list(RESUB_FL_1)
-    resubmit_meta_t resubmit_meta;
+    @field_list(RECIRC_FL_1)
     bit<48> hopLatency;
     bit<48> arrivalTimestamp;
     bit<48> departureTimestamp;
+    bit<48> initialArrivalTimestamp; // Preserve initial arrival timestamp
     bit<8> recircCounter;
 }
 
 struct headers {
     ethernet_t ethernet;
     ipv4_t ipv4;
+    tcp_t tcp;
     hop_latency_t hop_latency;
-    recirculation_flag_t recircFlag;
 }
 
 /*************************************************************************
@@ -89,21 +90,32 @@ parser MyParser(packet_in packet,
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
-            default: parse_hop_latency;
+            default: accept;
         }
     }
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
+        transition select(hdr.ipv4.protocol) {
+            PROTO_TCP: parse_tcp;
+            default: accept;
+        }
+    }
+
+    state parse_tcp {
+        packet.extract(hdr.tcp);
         transition parse_hop_latency;
     }
 
     state parse_hop_latency {
         packet.extract(hdr.hop_latency);
-        packet.extract(hdr.recircFlag);
+        // Only set initialArrivalTimestamp if it's zero (i.e., first arrival)
+        if (meta.initialArrivalTimestamp == 0) {
+            meta.initialArrivalTimestamp = standard_metadata.ingress_global_timestamp;
+        }
         meta.arrivalTimestamp = standard_metadata.ingress_global_timestamp;
-        meta.hopLatency = hdr.hop_latency.hopLatency * 1000000000;
-        meta.departureTimestamp = meta.arrivalTimestamp + meta.hopLatency;
+        meta.hopLatency = hdr.hop_latency.hopLatency;
+        meta.departureTimestamp = meta.initialArrivalTimestamp + meta.hopLatency;
         transition accept;
     }
 }
@@ -136,8 +148,15 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.dstAddr = dstAddr;
         // Decrease TTL by one when forwarding the packet
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
-        // Update hop latency in the packet header
-        hdr.hop_latency.hopLatency = meta.hopLatency + 1;
+    }
+
+    action recirculate_packet() {
+        // Increase recirculation counter
+        meta.recircCounter = meta.recircCounter + 1;
+        // update header fields
+        meta.departureTimestamp = standard_metadata.ingress_global_timestamp + meta.hopLatency;
+        // Send the packet through the ingress pipeline again
+        resubmit_preserving_field_list(RECIRC_FL_1);
     }
 
     table ipv4_forward_table {
@@ -154,10 +173,13 @@ control MyIngress(inout headers hdr,
     }
 
     apply {
-        // Least-Prefix Matching applied only when IPv4 header is correct
-        // Simple forward
         if (hdr.ipv4.isValid()) {
             ipv4_forward_table.apply();
+        }
+
+        // Recirculate the packet if departure time is not reached and recircCounter < MAX_RECIRC
+        if (meta.departureTimestamp > standard_metadata.ingress_global_timestamp && meta.recircCounter < 5) {
+            recirculate_packet();
         }
     }
 }
@@ -169,28 +191,8 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-
-    const bit<8> MAX_RECIRC = 5;
-
-    action drop() {
-        mark_to_drop(standard_metadata);
-    }
-
-    action recirculate_packet() {
-        // Send the packet through both ingress and egress pipelines again
-        meta.recircCounter = meta.recircCounter + 1;
-        hdr.recircFlag.isRecirculated = 1;
-        recirculate_preserving_field_list(RESUB_FL_1);
-    }
-
     apply {
-        if (meta.recircCounter > MAX_RECIRC) {
-            drop();
-        } else {
-            if (meta.departureTimestamp > standard_metadata.egress_global_timestamp) {
-                recirculate_packet();
-            }
-        }
+        // No specific egress logic needed
     }
 }
 
@@ -226,8 +228,8 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.ipv4);        // Always emit ipv4 if valid
+        packet.emit(hdr.tcp);         // Always emit tcp if valid
         packet.emit(hdr.hop_latency); // Always emit hop latency
-        packet.emit(hdr.recircFlag);  // Emit recirculation flag
     }
 }
 
