@@ -46,19 +46,21 @@ header ipv4_t {
 header customdata_t {
     bit<16> proto_id;
     bit<16> content_id;
-    bit<16>  ingress_num;
+    bit<16> ingress_num;
     bit<8>  egress_num;
-    bit<48> hop_latency;
+    bit<48> hop_latency; // hop_latency in seconds
     bit<48> arrival_time;
     bit<48> departure_time;
 }
 
-const bit<8> RECIRC_FL_1 = 1;
+const bit<8> RECIRC_FL_1 = 3;
 const bit<16> MAX_RECIRC = 1000;
 
 struct resubmit_meta_t {
     @field_list(RECIRC_FL_1)
     bit<16> i;
+    bit<48> arrival_timestamp;
+    bit<48> departure_timestamp;
 }
 
 struct metadata {
@@ -148,10 +150,12 @@ control MyIngress(inout headers hdr,
 
     action timestamp_packet() {
         hdr.customdata.arrival_time = standard_metadata.ingress_global_timestamp;
+        meta.resubmit_meta.arrival_timestamp = hdr.customdata.arrival_time;
     }
 
     action calculate_departure_time(bit<48> latency_ns) {
-        hdr.customdata.departure_time = hdr.customdata.arrival_time + latency_ns;
+        hdr.customdata.departure_time = standard_metadata.ingress_global_timestamp + latency_ns;
+        meta.resubmit_meta.departure_timestamp = hdr.customdata.departure_time;
     }
 
     table ipv4_forward_table {
@@ -186,9 +190,11 @@ control MyIngress(inout headers hdr,
                 calculate_departure_time(hdr.customdata.hop_latency);
                 update_customdata_processing_count_by_num(meta.resubmit_meta.i);
             }
-            if (hdr.customdata.departure_time > standard_metadata.ingress_global_timestamp && meta.resubmit_meta.i != MAX_RECIRC) {
-                meta.resubmit_meta.i  = meta.resubmit_meta.i + 1;
-                recirculate_packet();
+            if (hdr.customdata.departure_time > standard_metadata.ingress_global_timestamp) {
+                if (meta.resubmit_meta.i < MAX_RECIRC) {
+                    meta.resubmit_meta.i  = meta.resubmit_meta.i + 1;
+                    recirculate_packet();
+                }
             }
             update_customdata_processing_count_by_num(1);
             customdata_forward_table.apply();
@@ -211,13 +217,19 @@ control MyEgress(inout headers hdr,
     action update_customdata_processing_count_by_num(in bit<8> egress_num) {
         hdr.customdata.egress_num = hdr.customdata.egress_num + egress_num;
     }
+
+    action update_arrival_time() {
+        hdr.customdata.arrival_time = meta.resubmit_meta.arrival_timestamp;
+    }
+
     action update_departure_time() {
-        hdr.customdata.departure_time = standard_metadata.egress_global_timestamp;
+        hdr.customdata.departure_time = meta.resubmit_meta.departure_timestamp;
     }
 
     apply {
         if (hdr.customdata.isValid()) {
             update_customdata_processing_count_by_num(1);
+            update_arrival_time();
             update_departure_time();
         }
     }

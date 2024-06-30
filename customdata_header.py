@@ -19,7 +19,7 @@ class CustomData(Packet):
         XLongField("departure_time", 0),
     ]
     def mysummary(self):
-        return self.sprintf("proto_id=%proto_id%, content_id=%content_id%, ingress_num=%ingress_num%, egress_num=%egress_num%, hop_latency=%hop_latency%, arrival_time=%arrival_time%, departure_time=%departure_time%, delay=%delay%")
+        return self.sprintf("content_id=%content_id% ingress_num=%ingress_num% egress_num=%egress_num% hop_latency=%hop_latency% arrival_time=%arrival_time% departure_time=%departure_time%")
 
 
 bind_layers(Ether, CustomData, type=TYPE_CUSTOMDATA)
