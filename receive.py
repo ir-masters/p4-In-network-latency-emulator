@@ -26,9 +26,8 @@ def handle_pkt(pkt):
         print("got a packet")
         custom_data = pkt[CustomData]
         if custom_data is not None:
-            print("CustomData content_id = ", custom_data.content_id)
-            print("CustomData ingress_num = ", custom_data.ingress_num)
-            print("CustomData egress_num = ", custom_data.egress_num)
+            print("CustomData packet")
+            pkt.show2()
             print("Packet received with timestamp: ", time.time())
         else:
             print("TCP packet")

@@ -53,8 +53,7 @@ header customdata_t {
     bit<16> ingress_num;
     bit<8>  egress_num;
     bit<48> hop_latency;
-    bit<48> arrival_time;
-    bit<48> departure_time;
+    
 }
 
 const bit<8> RECIRC_FL_1 = 1;
@@ -64,6 +63,10 @@ const bit<16> MAX_RECIRC = 100000;
 struct resubmit_meta_t {
     @field_list(RECIRC_FL_1)
     bit<16> i;
+    @field_list(RECIRC_FL_1)
+    bit<48> arrival_time;
+    @field_list(RECIRC_FL_1)
+    bit<48> departure_time;
 }
 
 /* Define the metadata structure */
@@ -163,12 +166,12 @@ control MyIngress(inout headers hdr,
 
     /* Timestamp packet arrival */
     action timestamp_packet() {
-        hdr.customdata.arrival_time = standard_metadata.ingress_global_timestamp;
+        meta.resubmit_meta.arrival_time = standard_metadata.ingress_global_timestamp;
     }
 
     /* Calculate departure time */
-    action calculate_departure_time(bit<48> latency_ns) {
-        hdr.customdata.departure_time = standard_metadata.ingress_global_timestamp + latency_ns;
+    action calculate_departure_time(bit<48> latency) {
+        meta.resubmit_meta.departure_time = meta.resubmit_meta.arrival_time + latency;
     }
 
     /* Table for IPv4 forwarding */
@@ -205,7 +208,7 @@ control MyIngress(inout headers hdr,
                 calculate_departure_time(hdr.customdata.hop_latency);
                 update_customdata_processing_count_by_num(meta.resubmit_meta.i);
             }
-            if (hdr.customdata.departure_time > standard_metadata.ingress_global_timestamp) {
+            if (meta.resubmit_meta.departure_time > standard_metadata.ingress_global_timestamp) {
                 if (meta.resubmit_meta.i < MAX_RECIRC) {
                     meta.resubmit_meta.i = meta.resubmit_meta.i + 1;
                     recirculate_packet();

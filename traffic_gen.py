@@ -38,7 +38,7 @@ def main():
     for i in range(args.num_packets):
         hop_latency = args.latencies[i]
         pkt = Ether(src=get_if_hwaddr(iface), dst='ff:ff:ff:ff:ff:ff')
-        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=hop_latency, arrival_time=0, departure_time=0)
+        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=hop_latency)
         pkt = pkt / IP(dst=addr) / args.message
 
         print(f"Sending packet {i+1}/{args.num_packets} with hop latency {hop_latency} ns")

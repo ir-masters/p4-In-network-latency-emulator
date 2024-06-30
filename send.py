@@ -42,7 +42,7 @@ def main():
     if (custom_data is True or custom_id is not None):
         if (custom_id is None):
             custom_id = 101
-        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=hop_latency, arrival_time=0, departure_time=0)
+        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=hop_latency)
         pkt = pkt / IP(dst=addr) / args.message
     else:
         pkt = pkt / IP(dst=addr) / TCP(dport=1234, sport=random.randint(49152,65535)) / args.message

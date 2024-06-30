@@ -15,12 +15,9 @@ class CustomData(Packet):
         ByteField("egress_num", 0),
         # 48 bits
         XLongField("hop_latency", 0),
-        XLongField("arrival_time", 0),
-        XLongField("departure_time", 0),
     ]
     def mysummary(self):
-        return self.sprintf("content_id=%content_id% ingress_num=%ingress_num% egress_num=%egress_num% hop_latency=%hop_latency% arrival_time=%arrival_time% departure_time=%departure_time%")
-
+        return self.sprintf("content_id=%content_id% ingress_num=%ingress_num% egress_num=%egress_num% hop_latency=%hop_latency%")
 
 bind_layers(Ether, CustomData, type=TYPE_CUSTOMDATA)
 bind_layers(CustomData, IP, proto_id=TYPE_IPV4)
