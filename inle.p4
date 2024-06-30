@@ -46,17 +46,19 @@ header ipv4_t {
 header customdata_t {
     bit<16> proto_id;
     bit<16> content_id;
-    bit<8>  ingress_num;
+    bit<16>  ingress_num;
     bit<8>  egress_num;
+    bit<48> hop_latency;
     bit<48> arrival_time;
     bit<48> departure_time;
 }
 
 const bit<8> RECIRC_FL_1 = 1;
+const bit<16> MAX_RECIRC = 1000;
 
 struct resubmit_meta_t {
     @field_list(RECIRC_FL_1)
-    bit<8> i;
+    bit<16> i;
 }
 
 struct metadata {
@@ -125,7 +127,7 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
-    action update_customdata_processing_count_by_num(in bit<8> ingress_num) {
+    action update_customdata_processing_count_by_num(in bit<16> ingress_num) {
         hdr.customdata.ingress_num = hdr.customdata.ingress_num + ingress_num;
     }
 
@@ -181,9 +183,11 @@ control MyIngress(inout headers hdr,
         if (hdr.customdata.isValid()) {
             if (standard_metadata.instance_type != PKT_INSTANCE_TYPE_INGRESS_RECIRC) {
                 timestamp_packet();
-                calculate_departure_time(1000); // Example latency of 1000 nanoseconds
+                calculate_departure_time(hdr.customdata.hop_latency);
+                update_customdata_processing_count_by_num(meta.resubmit_meta.i);
             }
-            if (hdr.customdata.departure_time > standard_metadata.ingress_global_timestamp) {
+            if (hdr.customdata.departure_time > standard_metadata.ingress_global_timestamp && meta.resubmit_meta.i != MAX_RECIRC) {
+                meta.resubmit_meta.i  = meta.resubmit_meta.i + 1;
                 recirculate_packet();
             }
             update_customdata_processing_count_by_num(1);
@@ -207,10 +211,14 @@ control MyEgress(inout headers hdr,
     action update_customdata_processing_count_by_num(in bit<8> egress_num) {
         hdr.customdata.egress_num = hdr.customdata.egress_num + egress_num;
     }
+    action update_departure_time() {
+        hdr.customdata.departure_time = standard_metadata.egress_global_timestamp;
+    }
 
     apply {
         if (hdr.customdata.isValid()) {
             update_customdata_processing_count_by_num(1);
+            update_departure_time();
         }
     }
 }
