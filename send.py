@@ -1,36 +1,19 @@
-from scapy.all import *
+#!/usr/bin/env python
+import argparse
+import sys
+import socket
+import random
+import struct
+import argparse
 
-def generate_ipv4_packet(dst_ip, ttl, hop_latency):
-    pkt = Ether() / IP(dst=dst_ip, ttl=ttl) / Raw(load="Test packet with IPv4")
-    pkt[IP].id = hop_latency  # Embedding hop latency in IP ID field for testing
-    return pkt
-
-def generate_customdata_packet(dst_mac, proto_id, content_id, ingress_num, egress_num, hop_latency):
-    ether = Ether(dst=dst_mac)
-    customdata = struct.pack("!HHBBQ", proto_id, content_id, ingress_num, egress_num, hop_latency)
-    pkt = ether / Raw(load=customdata) / Raw(load="Test packet with custom data")
-    return pkt
-
-def send_test_packets(interface):
-    # Generate IPv4 packets with varying TTL and hop latency values
-    ipv4_packets = [generate_ipv4_packet("10.0.0.2", ttl, hop_latency) 
-                    for ttl, hop_latency in zip(range(1, 6), range(100, 600, 100))]
-
-    # Generate custom data packets with varying hop latency values
-    # custom_packets = [generate_customdata_packet("00:00:00:02:01:00", 0x1313, i, 1, 1, hop_latency) 
-                    #   for i, hop_latency in zip(range(1, 6), range(100, 600, 100))]
-
-    # Combine all packets
-    all_packets = ipv4_packets
-    # + custom_packets
-
-    # Send packets
-    sendp(all_packets, iface=interface)
-    print(f"Sent {len(all_packets)} packets")
+from scapy.all import sendp, send, get_if_list, get_if_hwaddr, hexdump
+from scapy.all import Packet
+from scapy.all import Ether, IP, UDP, TCP
+from customdata_header import CustomData
 
 def get_if():
     ifs=get_if_list()
-    iface=None
+    iface=None # "h1-eth0"
     for i in get_if_list():
         if "eth0" in i:
             iface=i
@@ -40,8 +23,34 @@ def get_if():
         exit(1)
     return iface
 
-if __name__ == "__main__":
-    # Replace with your network interface name
-    interface = get_if()
-    print(f"Using interface {interface}")
-    send_test_packets(interface)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('ip_addr', type=str, help="The destination IP address to use")
+    parser.add_argument('message', type=str, help="The message to include in packet")
+    parser.add_argument('--custom', action="store_true", default=False, help="Flag indicating whether to use CustomData (defaults to false). If only this flag is provided, custom_id is set to 101 by default")
+    parser.add_argument('--custom_id', type=int, default=None, help="The ID of the custom content")
+    args = parser.parse_args()
+
+    addr = socket.gethostbyname(args.ip_addr)
+    custom_data = args.custom
+    custom_id = args.custom_id
+    iface = get_if()
+
+    pkt =  Ether(src=get_if_hwaddr(iface), dst='ff:ff:ff:ff:ff:ff')
+    print ("sending on interface {} to IP addr {}".format(iface, str(addr)))
+    if (custom_data is True or custom_id is not None):
+        if (custom_id is None):
+            custom_id = 101
+        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=90000, arrival_time=0, departure_time=0)
+        pkt = pkt / IP(dst=addr) / args.message
+    else:
+        pkt = pkt / IP(dst=addr) / TCP(dport=1234, sport=random.randint(49152,65535)) / args.message
+
+    pkt.show2()
+#    hexdump(pkt)
+#    print "len(pkt) = ", len(pkt)
+    sendp(pkt, iface=iface, verbose=False)
+
+
+if __name__ == '__main__':
+    main()
