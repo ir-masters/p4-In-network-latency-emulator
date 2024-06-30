@@ -6,6 +6,8 @@ net.setLogLevel('INFO')
 
 net.addP4Switch('s1')
 net.setP4Source('s1', 'inle.p4')
+net.setP4CliInput('s1', './s1-commands.txt')
+
 
 net.addHost('h1')
 net.addHost('h2')
