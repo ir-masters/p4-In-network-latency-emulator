@@ -57,15 +57,13 @@ header customdata_t {
     bit<48> departure_time;
 }
 
-const bit<8> RECIRC_FL_1 = 3;
-const bit<16> MAX_RECIRC = 1000;
+const bit<8> RECIRC_FL_1 = 1;
+const bit<16> MAX_RECIRC = 100000;
 
 /* Metadata structure for resubmitting packets */
 struct resubmit_meta_t {
     @field_list(RECIRC_FL_1)
     bit<16> i;
-    bit<48> arrival_timestamp;
-    bit<48> departure_timestamp;
 }
 
 /* Define the metadata structure */
@@ -166,13 +164,11 @@ control MyIngress(inout headers hdr,
     /* Timestamp packet arrival */
     action timestamp_packet() {
         hdr.customdata.arrival_time = standard_metadata.ingress_global_timestamp;
-        meta.resubmit_meta.arrival_timestamp = hdr.customdata.arrival_time;
     }
 
     /* Calculate departure time */
     action calculate_departure_time(bit<48> latency_ns) {
         hdr.customdata.departure_time = standard_metadata.ingress_global_timestamp + latency_ns;
-        meta.resubmit_meta.departure_timestamp = hdr.customdata.departure_time;
     }
 
     /* Table for IPv4 forwarding */
@@ -211,7 +207,7 @@ control MyIngress(inout headers hdr,
             }
             if (hdr.customdata.departure_time > standard_metadata.ingress_global_timestamp) {
                 if (meta.resubmit_meta.i < MAX_RECIRC) {
-                    meta.resubmit_meta.i  = meta.resubmit_meta.i + 1;
+                    meta.resubmit_meta.i = meta.resubmit_meta.i + 1;
                     recirculate_packet();
                 }
             }
@@ -239,21 +235,9 @@ control MyEgress(inout headers hdr,
         hdr.customdata.egress_num = hdr.customdata.egress_num + egress_num;
     }
 
-    /* Update arrival time */
-    action update_arrival_time() {
-        hdr.customdata.arrival_time = meta.resubmit_meta.arrival_timestamp;
-    }
-
-    /* Update departure time */
-    action update_departure_time() {
-        hdr.customdata.departure_time = meta.resubmit_meta.departure_timestamp;
-    }
-
     apply {
         if (hdr.customdata.isValid()) {
             update_customdata_processing_count_by_num(1);
-            update_arrival_time();
-            update_departure_time();
         }
     }
 }

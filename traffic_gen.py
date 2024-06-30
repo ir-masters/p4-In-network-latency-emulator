@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 import argparse
-import sys
 import socket
-import random
-import struct
 import time
 
 from scapy.all import sendp, get_if_list, get_if_hwaddr, Ether, IP, TCP
@@ -47,6 +44,7 @@ def main():
         print(f"Sending packet {i+1}/{args.num_packets} with hop latency {hop_latency} ns")
         pkt.show2()
         sendp(pkt, iface=iface, verbose=False)
+        print(f"Packet {i+1} sent with timestamp: ", time.time())
         time.sleep(0.1)  # Add a small delay between packet transmissions to avoid overwhelming the network
 
 if __name__ == '__main__':

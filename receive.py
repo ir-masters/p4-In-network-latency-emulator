@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import sys
-import struct
-import os
+import time
 
 from scapy.all import sniff, sendp, hexdump, get_if_list, get_if_hwaddr
 from scapy.all import Packet, IPOption
@@ -30,16 +29,12 @@ def handle_pkt(pkt):
             print("CustomData content_id = ", custom_data.content_id)
             print("CustomData ingress_num = ", custom_data.ingress_num)
             print("CustomData egress_num = ", custom_data.egress_num)
-            print("CustomData hop_latency = ", custom_data.hop_latency)
-            print("CustomData arrival_time = ", custom_data.arrival_time)
-            print("CustomData departure_time = ", custom_data.departure_time)
-            print("Delay = ",( custom_data.departure_time - custom_data.arrival_time ) / 1000000)
+            print("Packet received with timestamp: ", time.time())
         else:
             print("TCP packet")
             pkt.show2()
-        # pkt.show2()
-#        hexdump(pkt)
-#        print "len(pkt) = ", len(pkt)
+            print("Packet received with timestamp: ", time.time())
+
         sys.stdout.flush()
 
 

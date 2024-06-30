@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 import argparse
-import sys
 import socket
 import random
-import struct
 import argparse
+import time
 
 from scapy.all import sendp, send, get_if_list, get_if_hwaddr, hexdump
 from scapy.all import Packet
@@ -49,9 +48,8 @@ def main():
         pkt = pkt / IP(dst=addr) / TCP(dport=1234, sport=random.randint(49152,65535)) / args.message
 
     pkt.show2()
-#    hexdump(pkt)
-#    print "len(pkt) = ", len(pkt)
     sendp(pkt, iface=iface, verbose=False)
+    print("Packet sent with timestamp: ", time.time())
 
 
 if __name__ == '__main__':
