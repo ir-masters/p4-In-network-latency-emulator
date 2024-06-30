@@ -29,11 +29,13 @@ def main():
     parser.add_argument('message', type=str, help="The message to include in packet")
     parser.add_argument('--custom', action="store_true", default=False, help="Flag indicating whether to use CustomData (defaults to false). If only this flag is provided, custom_id is set to 101 by default")
     parser.add_argument('--custom_id', type=int, default=None, help="The ID of the custom content")
+    parser.add_argument('--hop_latency', type=int, default=0, help="The hop latency of the custom content")
     args = parser.parse_args()
 
     addr = socket.gethostbyname(args.ip_addr)
     custom_data = args.custom
     custom_id = args.custom_id
+    hop_latency = args.hop_latency
     iface = get_if()
 
     pkt =  Ether(src=get_if_hwaddr(iface), dst='ff:ff:ff:ff:ff:ff')
@@ -41,7 +43,7 @@ def main():
     if (custom_data is True or custom_id is not None):
         if (custom_id is None):
             custom_id = 101
-        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=90000, arrival_time=0, departure_time=0)
+        pkt = pkt / CustomData(content_id=custom_id, ingress_num=0, egress_num=0, hop_latency=hop_latency, arrival_time=0, departure_time=0)
         pkt = pkt / IP(dst=addr) / args.message
     else:
         pkt = pkt / IP(dst=addr) / TCP(dport=1234, sport=random.randint(49152,65535)) / args.message

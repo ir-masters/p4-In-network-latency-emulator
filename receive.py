@@ -25,7 +25,19 @@ def get_if():
 def handle_pkt(pkt):
     if CustomData in pkt or (TCP in pkt and pkt[TCP].dport == 1234):
         print("got a packet")
-        pkt.show2()
+        custom_data = pkt[CustomData]
+        if custom_data is not None:
+            print("CustomData content_id = ", custom_data.content_id)
+            print("CustomData ingress_num = ", custom_data.ingress_num)
+            print("CustomData egress_num = ", custom_data.egress_num)
+            print("CustomData hop_latency = ", custom_data.hop_latency)
+            print("CustomData arrival_time = ", custom_data.arrival_time)
+            print("CustomData departure_time = ", custom_data.departure_time)
+            print("Delay = ",( custom_data.departure_time - custom_data.arrival_time ) / 1000000)
+        else:
+            print("TCP packet")
+            pkt.show2()
+        # pkt.show2()
 #        hexdump(pkt)
 #        print "len(pkt) = ", len(pkt)
         sys.stdout.flush()
